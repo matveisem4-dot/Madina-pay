@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MPay Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-6">
+
+    <!-- Форма локальной авторизации -->
+    <div id="admin-auth" class="max-w-md mx-auto bg-slate-900 p-6 rounded-3xl border border-slate-800 flex flex-col gap-4">
+        <h1 class="text-xl font-bold text-amber-400">Админ Вход</h1>
+        <p class="text-xs text-slate-400">Введите данные доступа к репозиторию. Они сохранятся локально в вашем браузере.</p>
+        <input type="text" id="adm-owner" placeholder="GitHub Username" class="p-3 bg-slate-950 border border-slate-700 rounded-xl text-sm outline-none">
+        <input type="text" id="adm-repo" placeholder="GitHub Repo" class="p-3 bg-slate-950 border border-slate-700 rounded-xl text-sm outline-none">
+        <input type="password" id="adm-token" placeholder="GitHub Personal Access Token" class="p-3 bg-slate-950 border border-slate-700 rounded-xl text-sm outline-none">
+        <button onclick="loginAdmin()" class="py-3 bg-amber-600 hover:bg-amber-500 font-bold rounded-xl">Войти в панель</button>
+    </div>
+
+    <!-- Панель управления -->
+    <div id="admin-panel" class="max-w-6xl mx-auto flex flex-col gap-6 hidden">
+        <div class="flex justify-between items-center bg-slate-900 p-6 rounded-3xl border border-slate-800">
+            <div>
+                <h1 class="text-2xl font-bold text-amber-400">MPay Central Command</h1>
+                <p class="text-xs text-slate-400">Прямое управление файлами Базы Данных</p>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="loadDatabase()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 font-bold rounded-xl text-sm">🔄 Обновить</button>
+                <button onclick="logoutAdmin()" class="px-4 py-2 bg-rose-950 text-rose-400 hover:bg-rose-900 font-bold rounded-xl text-sm">Выйти</button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="bg-slate-900/90 p-6 rounded-3xl border border-slate-800 flex flex-col gap-4">
+                <h2 class="text-lg font-bold text-emerald-400">База Карт</h2>
+                <div id="cards-container" class="flex flex-col gap-3 max-h-96 overflow-y-auto"></div>
+            </div>
+            <div class="bg-slate-900/90 p-6 rounded-3xl border border-slate-800 flex flex-col gap-4">
+                <h2 class="text-lg font-bold text-blue-400">База Терминалов</h2>
+                <div id="terminals-container" class="flex flex-col gap-3 max-h-96 overflow-y-auto"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        window.onload = () => {
+            if (localStorage.getItem('mpay_adm_token')) {
+                showPanel();
+            }
+        };
+
+        function loginAdmin() {
+            const owner = document.getElementById('adm-owner').value.trim();
+            const repo = document.getElementById('adm-repo').value.trim();
+            const token = document.getElementById('adm-token').value.trim();
+
+            if (!owner || !repo || !token) return alert("Заполните все поля!");
+
+            localStorage.setItem('mpay_adm_owner', owner);
+            localStorage.setItem('mpay_adm_repo', repo);
+            localStorage.setItem('mpay_adm_token', token);
+            showPanel();
+        }
+
+        function showPanel() {
+            document.getElementById('admin-auth').classList.add('hidden');
+            document.getElementById('admin-panel').classList.remove('hidden');
+            loadDatabase();
+        }
+
+        function logoutAdmin() {
+            localStorage.clear();
+            location.reload();
+        }
+
+        async function loadDatabase() {
+            const owner = localStorage.getItem('mpay_adm_owner');
+            const repo = localStorage.getItem('mpay_adm_repo');
+            const token = localStorage.getItem('mpay_adm_token');
+
+            // Загрузка карт
+            const cardsContainer = document.getElementById('cards-container');
+            cardsContainer.innerHTML = "Загрузка...";
+            
+            try {
+                const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/cards`, {
+                    headers: { "Authorization": `token ${token}` }
+                });
+                const files = await res.json();
+                cardsContainer.innerHTML = "";
+
+                if (Array.isArray(files)) {
+                    for (let f of files) {
+                        const fileRes = await fetch(f.download_url);
+                        const cardData = await fileRes.json();
+                        
+                        const div = document.createElement('div');
+                        div.className = "bg-slate-950 p-4 rounded-xl border border-slate-800 flex justify-between items-center";
+                        div.innerHTML = `
+                            <div>
+                                <div class="font-bold text-emerald-400">${f.name.replace('.json','')}</div>
+                                <div class="text-xs text-slate-400">Баланс: ${cardData.balance} EGP | ПИН: <b class="text-amber-400">${cardData.rawPin || 'N/A'}</b></div>
+                            </div>
+                            <button onclick="toggleCardBlock('${f.path}', ${!cardData.isBlocked}, '${f.sha}')" class="px-3 py-1 text-xs rounded-lg font-bold ${cardData.isBlocked ? 'bg-emerald-600' : 'bg-rose-600'}">
+                                ${cardData.isBlocked ? 'Разблок' : 'Блок'}
+                            </button>
+                        `;
+                        cardsContainer.appendChild(div);
+                    }
+                }
+            } catch (e) {
+                cardsContainer.innerHTML = "Ошибка загрузки карт. Проверьте токен!";
+            }
+        }
+
+        async function toggleCardBlock(path, newStatus, sha) {
+            const owner = localStorage.getItem('mpay_adm_owner');
+            const repo = localStorage.getItem('mpay_adm_repo');
+            const token = localStorage.getItem('mpay_adm_token');
+
+            const currentFile = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`).then(r => r.json());
+            currentFile.isBlocked = newStatus;
+
+            await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
+                method: "PUT",
+                headers: { "Authorization": `token ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    message: "Admin block change",
+                    content: btoa(JSON.stringify(currentFile, null, 2)),
+                    sha: sha
+                })
+            });
+            loadDatabase();
+        }
+    </script>
+</body>
+</html>
